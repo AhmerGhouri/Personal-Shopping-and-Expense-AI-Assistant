@@ -7,7 +7,7 @@ import { CATEGORIES, categoryColors, formatMoney, type Category, type Expense, t
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = MONTHS.map(month => month.slice(0, 3));
-const sourceLabels: Record<Expense['source'], string> = { purchase: 'Bought via assistant', assistant: 'Added by assistant', manual: 'Added manually' };
+const sourceLabels: Record<Expense['source'], string> = { purchase: 'Bought via assistant', booking: 'Booked via assistant', assistant: 'Added by assistant', manual: 'Added manually' };
 
 function dayLabel(iso: string) {
   const date = new Date(iso);

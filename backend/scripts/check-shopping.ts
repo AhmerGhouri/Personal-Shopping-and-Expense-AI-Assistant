@@ -20,9 +20,9 @@ const first = await ask('I want to buy a gaming laptop under 1000 dollars. Which
 console.log('search queries:', queries);
 console.log('reply:', first.reply, '| products:', first.products?.length);
 const second = await ask('Okay buy the Lenovo one', sample);
-console.log('reply:', second.reply, '| action:', JSON.stringify(second.action).slice(0, 120));
+console.log('reply:', second.reply, '| action:', JSON.stringify(second.actions).slice(0, 120));
 const typed = await respond({ text: 'I spent 2500 rupees on groceries today', expenses: [] });
-console.log('reply:', typed.reply, '| action:', JSON.stringify(typed.action));
+console.log('reply:', typed.reply, '| action:', JSON.stringify(typed.actions));
 const summary = await respond({ text: 'How much did I spend this month and on what?', expenses: [
   { title: 'Groceries', amount: 2500, category: 'Groceries', date: new Date().toISOString().slice(0, 10) },
   { title: 'Careem ride', amount: 650, category: 'Transport', date: new Date().toISOString().slice(0, 10) },

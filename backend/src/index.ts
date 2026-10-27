@@ -3,6 +3,7 @@ import { createAssistant, type AssistantServices } from './assistant.ts';
 import { createGroqServices } from './groq.ts';
 import { createApi } from './server.ts';
 import { createProductSearch } from './shopping.ts';
+import { createFlightSearch } from './travel.ts';
 
 const demo = process.env.DEMO_MODE === 'true';
 
@@ -17,6 +18,7 @@ const services: AssistantServices = demo ? {
 } : {
   ...createGroqServices(),
   searchProducts: createProductSearch(),
+  searchFlights: createFlightSearch(),
   shoppingRegion: shoppingRegion(process.env.SHOPPING_COUNTRY),
 };
 
@@ -47,5 +49,6 @@ server.listen(port, host, () => {
     console.log('If the phone cannot connect, allow Node.js through Windows Firewall (see docs/ANDROID-DEVICE-TEST.md).');
   }
   if (!demo) console.log(services.searchProducts ? `Shopping search: on (${(process.env.SHOPPING_COUNTRY || 'us').toLowerCase() === 'pk' ? 'Daraz.pk' : 'Google Shopping, ' + (process.env.SHOPPING_COUNTRY || 'us')})` : 'Shopping search: off. Add SERPAPI_KEY to backend/.env to enable it.');
+  if (!demo) console.log(services.searchFlights ? 'Flight search: on (Google Flights)' : 'Flight search: off. Add SERPAPI_KEY to backend/.env to enable it.');
   console.log('Each request is logged below. No log line means the phone never reached this computer.');
 });

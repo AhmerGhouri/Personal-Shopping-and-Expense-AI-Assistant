@@ -6,7 +6,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useVoiceAssistant, type VoiceStatus } from './src/features/voice/useVoiceAssistant';
 import { useServerConnection, type ConnectionState } from './src/features/connection/useServerConnection';
-import { checkHealth, type Product } from './src/api/assistant';
+import { checkHealth, type Flight, type Product } from './src/api/assistant';
 import { isValidServerUrl, normalizeServerUrl } from './src/settings/serverUrl';
 import { colors } from './src/theme';
 import { ProductCards } from './src/features/shopping/ProductCards';
@@ -14,6 +14,10 @@ import { DidBuySheet, PurchaseSheet } from './src/features/shopping/PurchaseShee
 import { ExpensesScreen } from './src/features/expenses/ExpensesScreen';
 import { useWakeWord } from './src/features/wakeword/useWakeWord';
 import { WakeWordSheet } from './src/features/wakeword/WakeWordSheet';
+import { useTrips } from './src/features/trips/trips';
+import { TripsScreen } from './src/features/trips/TripsScreen';
+import { FlightCards } from './src/features/trips/FlightCards';
+import { BookingSheet, DidBookSheet } from './src/features/trips/BookingSheet';
 import { asCategory, formatMoney, parsePrice, useExpenses } from './src/features/expenses/expenses';
 
 
@@ -25,7 +29,13 @@ const statusLabels: Record<VoiceStatus, string> = {
   speaking: 'Speaking… tap to stop',
 };
 
-const examples = ['I want a laptop for programming, budget 150,000', 'I spent 2,500 on groceries today', 'How much did I spend this month?'];
+const examples = [
+  'I want a laptop for programming, budget 150,000',
+  'Plan Umrah for two from Lahore, 10 to 20 December, and find flights',
+  'I spent 2,500 on groceries today',
+];
+const tabs = { assistant: 'Assistant', trips: 'Trips', expenses: 'Expenses' } as const;
+const subtitles = { assistant: 'Shop, plan trips, track every rupee', trips: 'Your travel plans', expenses: 'Your spending history' } as const;
 
 const connectionLabels: Record<ConnectionState, string> = { checking: 'Connecting', online: 'Online', offline: 'Offline' };
 const connectionColors: Record<ConnectionState, string> = { checking: colors.warning, online: colors.success, offline: colors.danger };
@@ -127,7 +137,7 @@ function ServerSheet({ visible, serverUrl, onClose, onSave }: {
   );
 }
 
-type Tab = 'assistant' | 'expenses';
+type Tab = keyof typeof tabs;
 
 function AssistantScreen() {
   const connection = useServerConnection();
@@ -135,11 +145,17 @@ function AssistantScreen() {
   const expenseSummary = useMemo(() => expenses.expenses.slice(0, 150).map(expense => ({
     title: expense.title, amount: expense.amount, category: expense.category, date: expense.date.slice(0, 10),
   })), [expenses.expenses]);
+  const trips = useTrips();
+  const tripSummary = useMemo(() => trips.trips.map(({ title, destination, startDate, endDate }) => ({ title, destination, startDate, endDate })), [trips.trips]);
   const voice = useVoiceAssistant({
     serverUrl: connection.serverUrl,
     expenses: expenseSummary,
+    trips: tripSummary,
     onAddExpense: expense => expenses.add({ ...expense, category: asCategory(expense.category), source: 'assistant' }),
+    onSaveTrip: trips.add,
   });
+  const [openTripId, setOpenTripId] = useState<string | null>(null);
+  const [booking, setBooking] = useState<{ flight: Flight; awaitingReturn: boolean } | null>(null);
   const { status, messages, error, demo } = voice;
   const [tab, setTab] = useState<Tab>('assistant');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -164,7 +180,9 @@ function AssistantScreen() {
   // After the store opens in the browser, ask on return whether the purchase went through.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', next => {
-      if (next === 'active') setCheckout(current => current && { ...current, awaitingReturn: false });
+      if (next !== 'active') return;
+      setCheckout(current => current && { ...current, awaitingReturn: false });
+      setBooking(current => current && { ...current, awaitingReturn: false });
     });
     return () => subscription.remove();
   }, []);
@@ -180,6 +198,19 @@ function AssistantScreen() {
     setCheckout(null);
   }
 
+  function answerBooking(booked: boolean) {
+    if (booked && booking) {
+      const { flight } = booking;
+      expenses.add({
+        title: `Flight ${flight.from} → ${flight.to} (${flight.airline})`, amount: flight.price, category: 'Travel', source: 'booking',
+        store: flight.airline, link: flight.bookingUrl, thumbnail: flight.airlineLogo,
+      });
+      const trip = trips.forFlight(flight);
+      if (trip) trips.update(trip.id, current => ({ ...current, flights: [...current.flights, flight] }));
+    }
+    setBooking(null);
+  }
+
   async function send() {
     const text = draft;
     setDraft('');
@@ -193,8 +224,8 @@ function AssistantScreen() {
         <View style={styles.brand}>
           <View style={styles.logo}><Text style={styles.logoText}>A</Text></View>
           <View>
-            <Text style={styles.title}>{tab === 'assistant' ? 'Assistant' : 'Expenses'}</Text>
-            <Text style={styles.subtitle}>{tab === 'assistant' ? 'Shop smarter, track every rupee' : 'Your spending history'}</Text>
+            <Text style={styles.title}>{tabs[tab]}</Text>
+            <Text style={styles.subtitle}>{subtitles[tab]}</Text>
           </View>
         </View>
         <View style={styles.headerActions}>
@@ -235,6 +266,8 @@ function AssistantScreen() {
             <Text style={styles.unlockText}>Unlock</Text>
           </Pressable>
         </View>
+      ) : tab === 'trips' ? (
+        <TripsScreen trips={trips.trips} openTripId={openTripId} onOpenTrip={setOpenTripId} onUpdate={trips.update} onRemove={trips.remove} />
       ) : tab === 'expenses' ? (
         <ExpensesScreen expenses={expenses.expenses} onAdd={expenses.add} onRemove={expenses.remove} />
       ) : (
@@ -267,6 +300,15 @@ function AssistantScreen() {
                     </View>
                   </View>
                   {message.products?.length ? <ProductCards products={message.products} onBuy={voice.requestPurchase} /> : null}
+                  {message.flights?.length ? <FlightCards flights={message.flights} onBook={voice.requestBooking} /> : null}
+                  {message.savedTrip ? (
+                    <Pressable accessibilityRole="button" onPress={() => { setTab('trips'); setOpenTripId(message.savedTrip!.id); }}
+                      style={({ pressed }) => [styles.tripChip, pressed && styles.pressed]}>
+                      <Text style={styles.tripChipLabel}>SAVED TO TRIPS</Text>
+                      <Text style={styles.tripChipTitle}>{message.savedTrip.title}</Text>
+                      <Text style={styles.tripChipLink}>View itinerary ›</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               );
             })}
@@ -314,16 +356,20 @@ function AssistantScreen() {
       )}
 
       <View style={styles.tabBar}>
-        {(['assistant', 'expenses'] as const).map(item => (
+        {(Object.keys(tabs) as Tab[]).map(item => (
           <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => setTab(item)} style={styles.tab}>
             <View style={[styles.tabIndicator, tab === item && styles.tabIndicatorActive]} />
-            <Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item === 'assistant' ? 'Assistant' : 'Expenses'}</Text>
+            <Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{tabs[item]}</Text>
           </Pressable>
         ))}
       </View>
 
       <PurchaseSheet product={voice.pendingPurchase} onClose={voice.cancelPurchase} beforeOpen={wake.unlock}
         onOpened={product => setCheckout({ product, awaitingReturn: true })} />
+      <BookingSheet flight={voice.pendingBooking} onClose={voice.cancelBooking} beforeOpen={wake.unlock}
+        onOpened={flight => setBooking({ flight, awaitingReturn: true })} />
+      <DidBookSheet flight={booking && !booking.awaitingReturn ? booking.flight : null}
+        tripTitle={booking ? trips.forFlight(booking.flight)?.title : undefined} onAnswer={answerBooking} />
       <DidBuySheet product={checkout && !checkout.awaitingReturn ? checkout.product : null}
         price={checkout ? formatMoney(checkout.product.priceValue ?? parsePrice(checkout.product.price) ?? 0) : ''} onAnswer={answerCheckout} />
       <WakeWordSheet visible={wakeOpen} onClose={() => setWakeOpen(false)} state={wake} />
@@ -361,6 +407,10 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   pillText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
   iconButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  tripChip: { marginTop: 10, marginLeft: 36, alignSelf: 'flex-start', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderLeftWidth: 4, borderLeftColor: colors.success, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, maxWidth: '82%' },
+  tripChipLabel: { color: colors.success, fontSize: 10.5, fontWeight: '800', letterSpacing: 0.8 },
+  tripChipTitle: { color: colors.text, fontSize: 15, fontWeight: '700', marginTop: 3 },
+  tripChipLink: { color: colors.accent, fontSize: 13, fontWeight: '700', marginTop: 6 },
   iconButtonOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   micIconSmall: { transform: [{ scale: 0.6 }] },
   lockedView: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 },

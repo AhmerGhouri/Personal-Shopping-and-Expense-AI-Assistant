@@ -1,6 +1,6 @@
 import { ApiError } from './assistant.ts';
 
-export const EXPENSE_CATEGORIES = ['Shopping', 'Food', 'Groceries', 'Transport', 'Bills', 'Health', 'Entertainment', 'Education', 'Other'] as const;
+export const EXPENSE_CATEGORIES = ['Shopping', 'Food', 'Groceries', 'Transport', 'Travel', 'Bills', 'Health', 'Entertainment', 'Education', 'Other'] as const;
 export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
 
 /** Expenses live on the phone; the app sends recent ones so the assistant can answer spending questions. */

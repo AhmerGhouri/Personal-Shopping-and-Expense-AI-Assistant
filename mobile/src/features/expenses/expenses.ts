@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Dirs, FileSystem } from 'react-native-file-access';
 
-export const CATEGORIES = ['Shopping', 'Food', 'Groceries', 'Transport', 'Bills', 'Health', 'Entertainment', 'Education', 'Other'] as const;
+export const CATEGORIES = ['Shopping', 'Food', 'Groceries', 'Transport', 'Travel', 'Bills', 'Health', 'Entertainment', 'Education', 'Other'] as const;
 export type Category = typeof CATEGORIES[number];
 
 export const categoryColors: Record<Category, string> = {
-  Shopping: '#7C8CFF', Food: '#FF9F6B', Groceries: '#4ADE9A', Transport: '#5CC8FF', Bills: '#F5C46B',
+  Shopping: '#7C8CFF', Food: '#FF9F6B', Groceries: '#4ADE9A', Transport: '#5CC8FF', Travel: '#3DD6B5', Bills: '#F5C46B',
   Health: '#FF7A85', Entertainment: '#C58CFF', Education: '#6BE3D6', Other: '#8E9AB0',
 };
 
@@ -16,7 +16,7 @@ export type Expense = {
   category: Category;
   /** ISO timestamp. */
   date: string;
-  source: 'purchase' | 'assistant' | 'manual';
+  source: 'purchase' | 'booking' | 'assistant' | 'manual';
   store?: string;
   link?: string;
   thumbnail?: string;

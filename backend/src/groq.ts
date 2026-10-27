@@ -6,6 +6,10 @@ export const GROQ_API_URL = 'https://api.groq.com/openai/v1';
 export const DEFAULT_ASR_MODEL = 'whisper-large-v3-turbo';
 export const DEFAULT_CHAT_MODEL = 'openai/gpt-oss-20b';
 
+/** Groq could not turn the model's output into valid tool-call JSON; a fresh attempt usually succeeds. */
+class ToolUseFailed extends Error {}
+const TOOL_ATTEMPTS = 3;
+
 type Dependencies = { fetch?: typeof fetch; normalizeAudio?: typeof normalizeAudio };
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
@@ -33,11 +37,12 @@ export function createGroqServices(env: NodeJS.ProcessEnv = process.env, depende
         // Only a bounded error code is retained; never retain echoed inputs or headers.
         const code = isObject(body) && isObject(body.error) && typeof body.error.code === 'string'
           ? body.error.code.slice(0, 100) : undefined;
+        if (code === 'tool_use_failed') throw new ToolUseFailed();
         throw { httpResponse: { status: response.status, body: { code } } };
       }
       return body;
     } catch (error) {
-      if (error instanceof ApiError) throw error;
+      if (error instanceof ApiError || error instanceof ToolUseFailed) throw error;
       throw inferenceError(error, stage);
     }
   }
@@ -68,14 +73,25 @@ export function createGroqServices(env: NodeJS.ProcessEnv = process.env, depende
       return first.message.content;
     },
     async chat(messages, tools) {
-      const result = await requestJson('/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: chatModel, messages, temperature: 0.4, max_completion_tokens: 1024,
-          ...(tools.length ? { tools: tools.map(tool => ({ type: 'function', function: tool })), tool_choice: 'auto' } : {}),
-          ...(chatModel.startsWith('openai/gpt-oss-') ? { reasoning_effort: 'low' } : {}),
-        }),
-      }, 'chat');
+      let result: unknown;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          result = await requestJson('/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              // Trip plans are long JSON tool calls; a low cap truncates them into invalid JSON.
+              model: chatModel, messages, temperature: 0.4, max_completion_tokens: 4000,
+              ...(tools.length ? { tools: tools.map(tool => ({ type: 'function', function: tool })), tool_choice: 'auto' } : {}),
+              ...(chatModel.startsWith('openai/gpt-oss-') ? { reasoning_effort: 'low' } : {}),
+            }),
+          }, 'chat');
+          break;
+        } catch (error) {
+          if (!(error instanceof ToolUseFailed)) throw error;
+          console.error(`[Groq chat] tool call JSON was malformed (attempt ${attempt}/${TOOL_ATTEMPTS})`);
+          if (attempt === TOOL_ATTEMPTS) throw new ApiError(502, 'The assistant had trouble formatting its answer. Please try again.');
+        }
+      }
       const first = isObject(result) && Array.isArray(result.choices) ? result.choices[0] : undefined;
       const message = isObject(first) && isObject(first.message) ? first.message : undefined;
       if (!message) throw new ApiError(502, 'Groq returned an invalid assistant response.');

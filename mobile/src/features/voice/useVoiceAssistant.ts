@@ -3,11 +3,14 @@ import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import { createSound } from 'react-native-nitro-sound';
 import { speech, type SpeechEvent } from '../../native/speech';
 import { Dirs } from 'react-native-file-access';
-import { deleteRecording, sendRecording, sendText, type AskContext, type AssistantResponse, type ExpenseSummary, type Message, type Product } from '../../api/assistant';
+import {
+  deleteRecording, sendRecording, sendText,
+  type AskContext, type AssistantResponse, type ExpenseSummary, type Flight, type Message, type Product, type TripPlan, type TripSummary,
+} from '../../api/assistant';
 import { config } from '../../config';
 
 /** A conversation entry; assistant entries can carry the product cards they showed. */
-export type ChatEntry = Message & { products?: Product[] };
+export type ChatEntry = Message & { products?: Product[]; flights?: Flight[]; savedTrip?: { id: string; title: string } };
 
 export type VoiceStatus = 'idle' | 'preparing' | 'listening' | 'thinking' | 'speaking';
 
@@ -15,15 +18,19 @@ type Options = {
   serverUrl: string;
   /** Recent expenses, so the assistant can answer "how much did I spend…". */
   expenses: ExpenseSummary[];
+  trips: TripSummary[];
   onAddExpense: (expense: { title: string; amount: number; category: string }) => void;
+  /** Saves a plan and returns its id so the chat can link to it. */
+  onSaveTrip: (trip: TripPlan) => string;
 };
 
-export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options) {
+export function useVoiceAssistant({ serverUrl, expenses, trips, onAddExpense, onSaveTrip }: Options) {
   const [recorder] = useState(() => createSound());
   const [status, setStatus] = useState<VoiceStatus>('idle');
   const [durationMillis, setDurationMillis] = useState(0);
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [pendingPurchase, setPendingPurchase] = useState<Product | null>(null);
+  const [pendingBooking, setPendingBooking] = useState<Flight | null>(null);
   const [error, setError] = useState('');
   const [demo, setDemo] = useState(false);
   const mounted = useRef(true);
@@ -41,19 +48,32 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
   expensesRef.current = expenses;
   const onAddExpenseRef = useRef(onAddExpense);
   onAddExpenseRef.current = onAddExpense;
+  const tripsRef = useRef(trips);
+  tripsRef.current = trips;
+  const onSaveTripRef = useRef(onSaveTrip);
+  onSaveTripRef.current = onSaveTrip;
 
   function askContext(entries: ChatEntry[]): AskContext {
     return {
       history: entries.map(({ role, content }) => ({ role, content })),
       products: [...entries].reverse().find(message => message.products?.length)?.products ?? [],
+      flights: [...entries].reverse().find(message => message.flights?.length)?.flights ?? [],
       expenses: expensesRef.current,
+      trips: tripsRef.current,
     };
   }
 
-  function applyActions(result: AssistantResponse) {
-    if (result.action?.type === 'buy') setPendingPurchase(result.action.product);
-    if (result.action?.type === 'add_expense') onAddExpenseRef.current(result.action.expense);
+  /** Runs the assistant's actions and returns the chat entry for its reply. */
+  function applyActions(result: AssistantResponse): ChatEntry {
+    let savedTrip: ChatEntry['savedTrip'];
+    for (const action of result.actions ?? []) {
+      if (action.type === 'buy') setPendingPurchase(action.product);
+      else if (action.type === 'book_flight') setPendingBooking(action.flight);
+      else if (action.type === 'add_expense') onAddExpenseRef.current(action.expense);
+      else if (action.type === 'save_trip') savedTrip = { id: onSaveTripRef.current(action.trip), title: action.trip.title };
+    }
     setDemo(result.demo);
+    return { role: 'assistant', content: result.reply, products: result.products, flights: result.flights, savedTrip };
   }
 
   // Hands-free mode (after the wake word): send automatically once the user stops talking.
@@ -190,8 +210,8 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
       if (abort.signal.aborted) return;
       const result = await sendRecording(serverUrlRef.current, uri, askContext(messages), abort.signal);
       if (!mounted.current || generation.current !== current) return;
-      setMessages(previous => [...previous, { role: 'user', content: result.transcript }, { role: 'assistant', content: result.reply, products: result.products }]);
-      applyActions(result);
+      const reply = applyActions(result);
+      setMessages(previous => [...previous, { role: 'user', content: result.transcript }, reply]);
       try {
         if (!mounted.current || generation.current !== current) return;
         setStatus('speaking');
@@ -236,8 +256,7 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
     try {
       const result = await sendText(serverUrlRef.current, message, askContext(before), abort.signal);
       if (!mounted.current || generation.current !== current) return true;
-      setMessages([...before, { role: 'user', content: message }, { role: 'assistant', content: result.reply, products: result.products }]);
-      applyActions(result);
+      setMessages([...before, { role: 'user', content: message }, applyActions(result)]);
       setStatus('idle');
       return true;
     } catch (cause) {
@@ -260,9 +279,10 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
     setStatus('idle');
   }
 
-  function newConversation() { setMessages([]); setError(''); setDemo(false); setPendingPurchase(null); }
+  function newConversation() { setMessages([]); setError(''); setDemo(false); setPendingPurchase(null); setPendingBooking(null); }
   return {
     status, durationMillis, messages, error, demo, startRecording, finishRecording, stopSpeaking, newConversation, sendTypedMessage,
     pendingPurchase, requestPurchase: setPendingPurchase, cancelPurchase: () => setPendingPurchase(null),
+    pendingBooking, requestBooking: setPendingBooking, cancelBooking: () => setPendingBooking(null),
   };
 }

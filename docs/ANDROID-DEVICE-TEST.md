@@ -143,3 +143,23 @@ display over other apps, and battery set to Unrestricted. A "Say Gigi…"
 notification stays visible while it listens, and it only listens while the app
 is in the background. Tap **Turn off** on that notification, or use the switch
 in the app, to stop it.
+
+## Travel planner
+
+Ask for any kind of trip: "Plan Umrah for two from Lahore, 10 to 20 December,
+and find flights", "Plan a 3-day business trip to Dubai next week", or "Plan a
+family vacation to Hunza in June". The assistant saves a day-by-day itinerary,
+checklist and rough budget to the **Trips** tab.
+
+- **Flights:** real prices and times from Google Flights through SerpApi (uses
+  the same `SERPAPI_KEY`; prices in PKR when `SHOPPING_COUNTRY=pk`). Cards show
+  the cheapest and fastest options. Each search uses one SerpApi credit.
+- **Booking:** "Book the second one" or the **Book** button asks you to confirm,
+  then opens Google Flights for that route and date. There you pick the flight,
+  the airline or agent, and pay. When you come back, the app asks "Did you book
+  it?" and adds the ticket to Expenses (Travel) and to the matching trip.
+- **Calendar:** in a trip, tap **Add trip to calendar**, tap **Add to calendar**
+  on a booked flight, or long-press any activity. Your calendar app opens with
+  the event filled in, and you tap Save. The app needs no calendar permission.
+
+Trips are stored only on the phone.
