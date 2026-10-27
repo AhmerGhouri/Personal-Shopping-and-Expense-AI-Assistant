@@ -43,3 +43,6 @@ vendor/bundle/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Vosk wake word model (~68 MB). Download with scripts/get-wake-word-model.ps1.
+android/app/src/main/assets/vosk-model-en/

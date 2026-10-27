@@ -126,6 +126,9 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // On-device "Gigi" wake word detection (Vosk, offline and free; model in src/main/assets/vosk-model-en).
+    implementation("com.alphacephei:vosk-android:0.3.75") { exclude group: "net.java.dev.jna" }
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

@@ -7,11 +7,16 @@ import { colors } from '../../theme';
  * Every purchase goes through this confirmation. The app never pays on its own: it opens
  * the store's page and the user reviews and completes checkout there.
  */
-export function PurchaseSheet({ product, onClose, onOpened }: { product: Product | null; onClose: () => void; onOpened: (product: Product) => void }) {
+export function PurchaseSheet({ product, onClose, onOpened, beforeOpen }: {
+  product: Product | null; onClose: () => void; onOpened: (product: Product) => void;
+  /** Asks for fingerprint/PIN when the app is showing over the lock screen. */
+  beforeOpen?: () => Promise<boolean>;
+}) {
   const [error, setError] = useState('');
   async function open() {
     if (!product) return;
     try {
+      if (beforeOpen && !await beforeOpen()) { setError('Unlock your phone to continue to the store.'); return; }
       await Linking.openURL(product.link);
       setError('');
       onOpened(product);

@@ -56,11 +56,30 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
     setDemo(result.demo);
   }
 
+  // Hands-free mode (after the wake word): send automatically once the user stops talking.
+  const handsFree = useRef(false);
+  const heardSpeech = useRef(false);
+  const quietSince = useRef<number | null>(null);
+
   function clearTimer() { if (timer.current) clearTimeout(timer.current); timer.current = null; }
 
   useEffect(() => {
     mounted.current = true;
-    recorder.addRecordBackListener(event => { if (mounted.current) setDurationMillis(event.currentPosition); });
+    recorder.addRecordBackListener(event => {
+      if (!mounted.current) return;
+      setDurationMillis(event.currentPosition);
+      if (!handsFree.current || !listening.current || event.currentMetering === undefined) return;
+      // Levels are in dBFS: speech is usually louder than -32, a quiet room below -42.
+      if (event.currentMetering > -32) { heardSpeech.current = true; quietSince.current = null; return; }
+      if (event.currentMetering > -42) return;
+      const now = Date.now();
+      quietSince.current ??= now;
+      const silentFor = now - quietSince.current;
+      if ((heardSpeech.current && silentFor > 1500) || (!heardSpeech.current && event.currentPosition > 8000)) {
+        handsFree.current = false;
+        void finishRef.current();
+      }
+    });
     const speechEnded = (event: SpeechEvent) => {
       if (mounted.current && event.utteranceId === speechId.current) {
         speechId.current = null;
@@ -110,7 +129,7 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
     };
   }, [recorder]);
 
-  async function startRecording() {
+  async function startRecording(options: { handsFree?: boolean } = {}) {
     if (locked.current || listening.current) return;
     locked.current = true;
     setError('');
@@ -128,7 +147,10 @@ export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options
       const extension = Platform.OS === 'android' ? 'mp4' : 'm4a';
       const path = `${Dirs.CacheDir}/question-${Date.now()}.${extension}`;
       recordingUri.current = path;
-      const uri = await recorder.startRecorder(path, { AudioChannels: 1, AudioSamplingRate: 16000, AudioEncodingBitRate: 64000 });
+      handsFree.current = !!options.handsFree;
+      heardSpeech.current = false;
+      quietSince.current = null;
+      const uri = await recorder.startRecorder(path, { AudioChannels: 1, AudioSamplingRate: 16000, AudioEncodingBitRate: 64000 }, !!options.handsFree);
       recordingUri.current = uri;
       if (!mounted.current || AppState.currentState !== 'active') {
         await recorder.stopRecorder();

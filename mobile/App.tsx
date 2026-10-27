@@ -12,6 +12,8 @@ import { colors } from './src/theme';
 import { ProductCards } from './src/features/shopping/ProductCards';
 import { DidBuySheet, PurchaseSheet } from './src/features/shopping/PurchaseSheet';
 import { ExpensesScreen } from './src/features/expenses/ExpensesScreen';
+import { useWakeWord } from './src/features/wakeword/useWakeWord';
+import { WakeWordSheet } from './src/features/wakeword/WakeWordSheet';
 import { asCategory, formatMoney, parsePrice, useExpenses } from './src/features/expenses/expenses';
 
 
@@ -28,9 +30,9 @@ const examples = ['I want a laptop for programming, budget 150,000', 'I spent 2,
 const connectionLabels: Record<ConnectionState, string> = { checking: 'Connecting', online: 'Online', offline: 'Offline' };
 const connectionColors: Record<ConnectionState, string> = { checking: colors.warning, online: colors.success, offline: colors.danger };
 
-function MicIcon({ color }: { color: string }) {
+function MicIcon({ color, small }: { color: string; small?: boolean }) {
   return (
-    <View style={styles.micIcon}>
+    <View style={[styles.micIcon, small && styles.micIconSmall]}>
       <View style={[styles.micHead, { backgroundColor: color }]} />
       <View style={[styles.micCup, { borderColor: color }]} />
       <View style={[styles.micStem, { backgroundColor: color }]} />
@@ -141,6 +143,14 @@ function AssistantScreen() {
   const { status, messages, error, demo } = voice;
   const [tab, setTab] = useState<Tab>('assistant');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [wakeOpen, setWakeOpen] = useState(false);
+  const wake = useWakeWord({
+    // Opened by "Gigi": go straight to listening, and send when the user stops talking.
+    onWake: () => {
+      setTab('assistant');
+      if (voice.status === 'idle' || voice.status === 'speaking') void voice.startRecording({ handsFree: true });
+    },
+  });
   const [draft, setDraft] = useState('');
   const [checkout, setCheckout] = useState<{ product: Product; awaitingReturn: boolean } | null>(null);
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
@@ -193,6 +203,12 @@ function AssistantScreen() {
             <View style={[styles.dot, { backgroundColor: connectionColors[connection.state] }]} />
             <Text style={styles.pillText}>{connectionLabels[connection.state]}</Text>
           </Pressable>
+          {wake.available && (
+            <Pressable accessibilityRole="button" accessibilityLabel="Wake word settings" onPress={() => setWakeOpen(true)} hitSlop={8}
+              style={({ pressed }) => [styles.iconButton, wake.status?.enabled && styles.iconButtonOn, pressed && styles.pressed]}>
+              <MicIcon color={wake.status?.enabled ? colors.onAccent : colors.text} small />
+            </Pressable>
+          )}
           {tab === 'assistant' && (
             <Pressable accessibilityRole="button" accessibilityLabel="New conversation" disabled={status !== 'idle' || !messages.length}
               onPress={voice.newConversation} hitSlop={8}
@@ -210,7 +226,16 @@ function AssistantScreen() {
         </Pressable>
       )}
 
-      {tab === 'expenses' ? (
+      {tab === 'expenses' && wake.locked ? (
+        // Shown over the lock screen after "Gigi": spending history stays private until unlocked.
+        <View style={styles.lockedView}>
+          <Text style={styles.emptyTitle}>Unlock to see your expenses</Text>
+          <Text style={styles.emptyText}>Your spending history stays private while the phone is locked.</Text>
+          <Pressable accessibilityRole="button" onPress={() => void wake.unlock()} style={({ pressed }) => [styles.unlockButton, pressed && styles.pressed]}>
+            <Text style={styles.unlockText}>Unlock</Text>
+          </Pressable>
+        </View>
+      ) : tab === 'expenses' ? (
         <ExpensesScreen expenses={expenses.expenses} onAdd={expenses.add} onRemove={expenses.remove} />
       ) : (
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -297,10 +322,11 @@ function AssistantScreen() {
         ))}
       </View>
 
-      <PurchaseSheet product={voice.pendingPurchase} onClose={voice.cancelPurchase}
+      <PurchaseSheet product={voice.pendingPurchase} onClose={voice.cancelPurchase} beforeOpen={wake.unlock}
         onOpened={product => setCheckout({ product, awaitingReturn: true })} />
       <DidBuySheet product={checkout && !checkout.awaitingReturn ? checkout.product : null}
         price={checkout ? formatMoney(checkout.product.priceValue ?? parsePrice(checkout.product.price) ?? 0) : ''} onAnswer={answerCheckout} />
+      <WakeWordSheet visible={wakeOpen} onClose={() => setWakeOpen(false)} state={wake} />
       <ServerSheet visible={settingsOpen} serverUrl={connection.serverUrl} onClose={() => setSettingsOpen(false)} onSave={connection.update} />
     </SafeAreaView>
   );
@@ -335,6 +361,11 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   pillText: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
   iconButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  iconButtonOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  micIconSmall: { transform: [{ scale: 0.6 }] },
+  lockedView: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 },
+  unlockButton: { marginTop: 12, backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 36 },
+  unlockText: { color: colors.onAccent, fontWeight: '700', fontSize: 15 },
   iconButtonText: { color: colors.text, fontSize: 18, lineHeight: 20 },
 
   banner: { marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 14, backgroundColor: colors.dangerSoft, borderWidth: 1, borderColor: '#5A2632' },

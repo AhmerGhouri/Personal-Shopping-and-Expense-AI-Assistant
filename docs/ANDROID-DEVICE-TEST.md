@@ -123,3 +123,23 @@ it. Expenses get added three ways:
 
 Ask "How much did I spend this month?" and the assistant answers from your list.
 Expenses are stored only on the phone, so uninstalling the app deletes them.
+
+## "Gigi" wake word (Android)
+
+Say "Gigi" while the app is closed or the phone is locked: the screen wakes, the
+assistant opens on top of the lock screen and starts listening, then sends your
+question when you stop talking. Android never lets an app unlock the phone, so
+opening a store or the Expenses tab from the lock screen asks for your
+fingerprint or PIN.
+
+Detection uses Vosk, a free offline speech engine. It needs no account or key,
+and nothing leaves the phone until you say "Gigi". The English model is bundled
+in the APK (which is why the APK is about 70 MB). On a fresh clone, run
+`mobile/scripts/get-wake-word-model.ps1` once before building.
+
+Turn it on: tap the microphone icon in the app's top bar and switch on **Wake
+word**. Then tap **Allow** on each checklist item: open on the lock screen,
+display over other apps, and battery set to Unrestricted. A "Say Gigi…"
+notification stays visible while it listens, and it only listens while the app
+is in the background. Tap **Turn off** on that notification, or use the switch
+in the app, to stop it.
