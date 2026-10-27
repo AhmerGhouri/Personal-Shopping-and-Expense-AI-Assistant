@@ -1,0 +1,246 @@
+import { useEffect, useRef, useState } from 'react';
+import { AppState, PermissionsAndroid, Platform } from 'react-native';
+import { createSound } from 'react-native-nitro-sound';
+import { speech, type SpeechEvent } from '../../native/speech';
+import { Dirs } from 'react-native-file-access';
+import { deleteRecording, sendRecording, sendText, type AskContext, type AssistantResponse, type ExpenseSummary, type Message, type Product } from '../../api/assistant';
+import { config } from '../../config';
+
+/** A conversation entry; assistant entries can carry the product cards they showed. */
+export type ChatEntry = Message & { products?: Product[] };
+
+export type VoiceStatus = 'idle' | 'preparing' | 'listening' | 'thinking' | 'speaking';
+
+type Options = {
+  serverUrl: string;
+  /** Recent expenses, so the assistant can answer "how much did I spend…". */
+  expenses: ExpenseSummary[];
+  onAddExpense: (expense: { title: string; amount: number; category: string }) => void;
+};
+
+export function useVoiceAssistant({ serverUrl, expenses, onAddExpense }: Options) {
+  const [recorder] = useState(() => createSound());
+  const [status, setStatus] = useState<VoiceStatus>('idle');
+  const [durationMillis, setDurationMillis] = useState(0);
+  const [messages, setMessages] = useState<ChatEntry[]>([]);
+  const [pendingPurchase, setPendingPurchase] = useState<Product | null>(null);
+  const [error, setError] = useState('');
+  const [demo, setDemo] = useState(false);
+  const mounted = useRef(true);
+  const locked = useRef(false);
+  const listening = useRef(false);
+  const recordingUri = useRef<string | null>(null);
+  const speechId = useRef<string | number | null>(null);
+  const generation = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const finishRef = useRef<() => Promise<void>>(async () => {});
+  const serverUrlRef = useRef(serverUrl);
+  serverUrlRef.current = serverUrl;
+  const expensesRef = useRef(expenses);
+  expensesRef.current = expenses;
+  const onAddExpenseRef = useRef(onAddExpense);
+  onAddExpenseRef.current = onAddExpense;
+
+  function askContext(entries: ChatEntry[]): AskContext {
+    return {
+      history: entries.map(({ role, content }) => ({ role, content })),
+      products: [...entries].reverse().find(message => message.products?.length)?.products ?? [],
+      expenses: expensesRef.current,
+    };
+  }
+
+  function applyActions(result: AssistantResponse) {
+    if (result.action?.type === 'buy') setPendingPurchase(result.action.product);
+    if (result.action?.type === 'add_expense') onAddExpenseRef.current(result.action.expense);
+    setDemo(result.demo);
+  }
+
+  function clearTimer() { if (timer.current) clearTimeout(timer.current); timer.current = null; }
+
+  useEffect(() => {
+    mounted.current = true;
+    recorder.addRecordBackListener(event => { if (mounted.current) setDurationMillis(event.currentPosition); });
+    const speechEnded = (event: SpeechEvent) => {
+      if (mounted.current && event.utteranceId === speechId.current) {
+        speechId.current = null;
+        setStatus('idle');
+      }
+    };
+    const speechFailed = (event: SpeechEvent) => {
+      if (event.utteranceId !== speechId.current) return;
+      speechEnded(event);
+      if (mounted.current) setError('The reply is below, but speech playback failed. Check your installed voices.');
+    };
+    const finishedSubscription = speech.onFinish(speechEnded);
+    const errorSubscription = speech.onError(speechFailed);
+
+    const subscription = AppState.addEventListener('change', next => {
+      if (next === 'active') return;
+      generation.current++;
+      clearTimer();
+      controller.current?.abort();
+      speechId.current = null;
+      void speech.stop().catch(() => {});
+      if (listening.current) {
+        listening.current = false;
+        locked.current = true;
+        void recorder.stopRecorder().catch(() => '').then(async uri => {
+          const path = uri || recordingUri.current;
+          if (path) await deleteRecording(path);
+          recordingUri.current = null;
+        }).finally(() => { locked.current = false; });
+      }
+      if (mounted.current) setStatus('idle');
+    });
+    return () => {
+      mounted.current = false;
+      generation.current++;
+      clearTimer();
+      controller.current?.abort();
+      speechId.current = null;
+      void speech.stop().catch(() => {});
+      recorder.removeRecordBackListener();
+      void recorder.stopRecorder().catch(() => '').then(async uri => {
+        if (uri || recordingUri.current) await deleteRecording(uri || recordingUri.current!);
+      }).finally(() => recorder.dispose());
+      finishedSubscription?.remove();
+      errorSubscription?.remove();
+      subscription.remove();
+    };
+  }, [recorder]);
+
+  async function startRecording() {
+    if (locked.current || listening.current) return;
+    locked.current = true;
+    setError('');
+    setStatus('preparing');
+    try {
+      speechId.current = null;
+      await speech.stop().catch(() => {});
+      if (Platform.OS === 'android') {
+        const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (permission !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Microphone access is off. Allow it in Settings > Apps > Voice Assistant > Permissions.');
+      }
+      if (AppState.currentState !== 'active' || !mounted.current) { setStatus('idle'); return; }
+      // iOS microphone permission is requested by the native recorder.
+      const current = ++generation.current;
+      const extension = Platform.OS === 'android' ? 'mp4' : 'm4a';
+      const path = `${Dirs.CacheDir}/question-${Date.now()}.${extension}`;
+      recordingUri.current = path;
+      const uri = await recorder.startRecorder(path, { AudioChannels: 1, AudioSamplingRate: 16000, AudioEncodingBitRate: 64000 });
+      recordingUri.current = uri;
+      if (!mounted.current || AppState.currentState !== 'active') {
+        await recorder.stopRecorder();
+        await deleteRecording(uri);
+        recordingUri.current = null;
+        if (mounted.current) setStatus('idle');
+        return;
+      }
+      // An iOS permission dialog can emit an inactive event before recording starts.
+      generation.current = Math.max(generation.current, current);
+      listening.current = true;
+      setDurationMillis(0);
+      setStatus('listening');
+      timer.current = setTimeout(() => { void finishRef.current(); }, 30000);
+    } catch (cause) {
+      if (recordingUri.current) await deleteRecording(recordingUri.current);
+      recordingUri.current = null;
+      if (mounted.current) { setError(cause instanceof Error ? cause.message : 'Could not record.'); setStatus('idle'); }
+    } finally { locked.current = false; }
+  }
+
+  async function finishRecording() {
+    if (locked.current || !listening.current) return;
+    locked.current = true;
+    listening.current = false;
+    clearTimer();
+    const current = generation.current;
+    let uri = recordingUri.current;
+    const abort = new AbortController();
+    controller.current = abort;
+    const timeout = setTimeout(() => abort.abort(), 100000);
+    setStatus('thinking');
+    try {
+      uri = (await recorder.stopRecorder()) || uri;
+      recordingUri.current = null;
+      if (!uri) throw new Error('No recording was saved. Please try again.');
+      if (abort.signal.aborted) return;
+      const result = await sendRecording(serverUrlRef.current, uri, askContext(messages), abort.signal);
+      if (!mounted.current || generation.current !== current) return;
+      setMessages(previous => [...previous, { role: 'user', content: result.transcript }, { role: 'assistant', content: result.reply, products: result.products }]);
+      applyActions(result);
+      try {
+        if (!mounted.current || generation.current !== current) return;
+        setStatus('speaking');
+        const identifier = await speech.speak(result.reply, config.speechLanguage);
+        if (mounted.current && generation.current === current) speechId.current = identifier;
+        else await speech.stop();
+      } catch {
+        if (mounted.current && generation.current === current) {
+          setStatus('idle');
+          setError('The reply is below. Install a text-to-speech engine and a voice for the selected language to hear it.');
+        }
+      }
+    } catch (cause) {
+      if (mounted.current && generation.current === current) {
+        setError(abort.signal.aborted ? 'The request timed out. Please try again.' : cause instanceof Error ? cause.message : 'Could not connect to the assistant.');
+        setStatus('idle');
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (uri) await deleteRecording(uri);
+      if (controller.current === abort) controller.current = null;
+      locked.current = false;
+    }
+  }
+  finishRef.current = finishRecording;
+
+  /** Typed chat. Replies are shown but not spoken. Returns false so the caller can keep the draft. */
+  async function sendTypedMessage(text: string): Promise<boolean> {
+    const message = text.trim();
+    if (!message || locked.current || listening.current) return false;
+    locked.current = true;
+    const current = ++generation.current;
+    speechId.current = null;
+    await speech.stop().catch(() => {});
+    const before = messages;
+    const abort = new AbortController();
+    controller.current = abort;
+    const timeout = setTimeout(() => abort.abort(), 60000);
+    setError('');
+    setMessages([...before, { role: 'user', content: message }]);
+    setStatus('thinking');
+    try {
+      const result = await sendText(serverUrlRef.current, message, askContext(before), abort.signal);
+      if (!mounted.current || generation.current !== current) return true;
+      setMessages([...before, { role: 'user', content: message }, { role: 'assistant', content: result.reply, products: result.products }]);
+      applyActions(result);
+      setStatus('idle');
+      return true;
+    } catch (cause) {
+      if (!mounted.current || generation.current !== current) return false;
+      setMessages(before);
+      setError(abort.signal.aborted ? 'The request timed out. Please try again.' : cause instanceof Error ? cause.message : 'Could not connect to the assistant.');
+      setStatus('idle');
+      return false;
+    } finally {
+      clearTimeout(timeout);
+      if (controller.current === abort) controller.current = null;
+      locked.current = false;
+    }
+  }
+
+  async function stopSpeaking() {
+    generation.current++;
+    speechId.current = null;
+    await speech.stop().catch(() => {});
+    setStatus('idle');
+  }
+
+  function newConversation() { setMessages([]); setError(''); setDemo(false); setPendingPurchase(null); }
+  return {
+    status, durationMillis, messages, error, demo, startRecording, finishRecording, stopSpeaking, newConversation, sendTypedMessage,
+    pendingPurchase, requestPurchase: setPendingPurchase, cancelPurchase: () => setPendingPurchase(null),
+  };
+}

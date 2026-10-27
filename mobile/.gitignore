@@ -1,0 +1,45 @@
+node_modules/
+*.log
+
+# Metro / React Native
+.metro-health-check*
+*.jsbundle
+*.bundle
+!android/app/src/main/assets/.gitkeep
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/.idea/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+*.hprof
+# Release signing keys must never be committed (debug.keystore is the shared RN test key).
+*.jks
+android/app/*.keystore
+!android/app/debug.keystore
+android/keystore.properties
+
+# iOS
+ios/Pods/
+ios/build/
+**/xcuserdata/
+*.xcuserstate
+ios/.xcode.env.local
+ios/*.xcworkspace/xcuserdata/
+DerivedData/
+
+# Ruby / CocoaPods tooling
+.bundle/
+vendor/bundle/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

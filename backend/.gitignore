@@ -1,0 +1,12 @@
+node_modules/
+
+# Holds GROQ_API_KEY and SERPAPI_KEY. Copy .env.example to .env instead of committing it.
+.env
+.env.*
+!.env.example
+
+# TypeScript and test output
+dist/
+coverage/
+*.tsbuildinfo
+*.log
